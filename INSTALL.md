@@ -18,7 +18,7 @@ Commands are meant to be run in a **Terminal** inside the VM
 
 ---
 
-## Step 0 — Sanity check what you already have
+## Sanity Check
 
 ```bash
 docker --version          # e.g. "Docker version 24.x" (installed via docker.io)
@@ -26,15 +26,9 @@ python3 --version         # Ubuntu Desktop ships Python 3
 lsb_release -d            # confirm your Ubuntu version
 ```
 
-If `docker --version` prints a version, the engine is installed. It probably
-still needs `sudo` at this point — we fix that in Step 2.
-
 ---
 
-## Step 1 — Install the missing pieces
-
-The `docker.io` package installs the **engine** but **not** the Compose plugin,
-and a fresh desktop may be missing `pip`/`venv` and `git`. Install them all:
+## Compose, pip, venv
 
 ```bash
 sudo apt update
@@ -47,17 +41,9 @@ Verify Compose is now available:
 docker compose version    # should print "Docker Compose version v2.x"
 ```
 
-> **If `docker-compose-v2` isn't found** (older Ubuntu, e.g. 22.04 without
-> updates), install the classic standalone instead:
-> ```bash
-> sudo apt install -y docker-compose
-> ```
-> Then use the **hyphenated** command `docker-compose` everywhere this guide
-> says `docker compose`. (They behave the same for our purposes.)
-
 ---
 
-## Step 2 — Run Docker without `sudo` (recommended)
+## Un-`sudo` Docker (recommended)
 
 By default only root can talk to the Docker daemon. Add your user to the
 `docker` group so the rest of this guide (and the README) works without `sudo`:
@@ -73,16 +59,13 @@ sudo usermod -aG docker $USER
 reboot
 ```
 
-```bash
-# Option B — apply it to just the current shell without logging out:
-newgrp docker
-```
-
-Confirm it worked (no `sudo`, no permission error):
+Confirm with
 
 ```bash
 docker run --rm hello-world
 ```
+
+(no Errors thrown)
 
 Also make sure the daemon starts on every boot:
 
@@ -90,41 +73,17 @@ Also make sure the daemon starts on every boot:
 sudo systemctl enable --now docker
 ```
 
-> Don't want to bother with the group? You can instead prefix every `docker`
-> command in this guide and the README with `sudo`. The group approach is
-> less error-prone.
-
 ---
 
-## Step 3 — Get the project into the VM
-
-Pick whichever is convenient:
-
-**A. Clone with git** (if the repo is hosted somewhere):
+## Clone project
 
 ```bash
 cd ~
-git clone <your-repo-url> distributed-pizzeria
-cd distributed-pizzeria
+git clone https://github.com/wuerzig/cap-a-pizza
+cd cap-a-pizza
 ```
 
-**B. VirtualBox Shared Folder** (Guest Additions are installed, so this works).
-On the **host**: VM → *Settings → Shared Folders* → add the folder containing
-the project, tick **Auto-mount** and **Make Permanent**. Inside the VM the
-share appears under `/media/sf_<name>`; your user must be in the `vboxsf`
-group to read it:
-
-```bash
-sudo usermod -aG vboxsf $USER   # then log out/in (like Step 2)
-cp -r /media/sf_<name>/distributed-pizzeria ~/distributed-pizzeria
-cd ~/distributed-pizzeria
-```
-
-**C. Drag-and-drop / shared clipboard.** If you enabled Drag-and-Drop in the
-VM settings, just drop the `distributed-pizzeria` folder onto the desktop, then
-`cd ~/Desktop/distributed-pizzeria`.
-
-Whatever you choose, confirm you're in the right place:
+Confirm with
 
 ```bash
 ls
@@ -133,7 +92,7 @@ ls
 
 ---
 
-## Step 4 — Prepare the OrderService config
+## Activate OrderService configuration-template
 
 The stack ships with a ready-to-run `.env`, but confirm it exists (if it was
 lost via a shared folder / .gitignore, recreate it from the template):
@@ -148,7 +107,7 @@ grep MONGO_WRITE_CONCERN services/order-service/.env
 
 ---
 
-## Step 5 — Start the environment
+## Start the environment
 
 ```bash
 docker compose up --build
@@ -163,13 +122,9 @@ You're ready when you see:
   and then exit, and
 - the order/kitchen/payment services logging that Uvicorn is running.
 
-> **VM sizing tip:** give the VM at least **4 GB RAM** and **2 CPUs** in
-> VirtualBox settings. Three MongoDB nodes + RabbitMQ + three Python services
-> is snug in 2 GB.
-
 ---
 
-## Step 6 — Run the load generator + open the dashboard
+## Dashboard + Load-Generator
 
 Open a **second terminal** (`Ctrl`+`Alt`+`T`), in the project folder:
 
@@ -186,7 +141,7 @@ You should see a stream of `OK -> PAID / BAKING / FAILED` lines.
 Now open the dashboard. In the VM's **Firefox**:
 
 ```bash
-firefox dashboard.html
+mimeopen dashboard.html
 ```
 
 (or just double-click `dashboard.html` in the Files app). The counters should
@@ -201,7 +156,7 @@ curl http://localhost:8000/orders
 
 ---
 
-## Step 7 — Try the CAP experiment
+## Try the CAP experiment
 
 With the load tester running, simulate a network partition:
 
@@ -211,9 +166,7 @@ docker pause mongo-sec-1 mongo-sec-2      # isolate the primary
 docker unpause mongo-sec-1 mongo-sec-2    # heal the partition
 ```
 
-The full Phase 1 (AP) / Phase 2 (CP) walkthrough — including editing
-`MONGO_WRITE_CONCERN` and running `docker compose restart order-service` — is
-in **[README.md](README.md#-the-cap-theorem-experiment-session-1)**.
+Full LAB instructions are in the PDF-Documents (OPAL)
 
 ---
 
@@ -243,6 +196,3 @@ docker compose down -v
 | Dashboard shows "Cannot reach OrderService" | The stack isn't up yet, or you opened `dashboard.html` on the **host** instead of inside the VM. Open it inside the VM. |
 
 ---
-
-*That's it — you now have a distributed system running inside a single VM.
-Head to [README.md](README.md) for the lab sessions.* 🍕
