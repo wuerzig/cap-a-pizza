@@ -31,7 +31,7 @@ DELAY = 1.0 / REQUESTS_PER_SECOND  # 0.2s between requests
 
 # A little variety so the orders look believable in the dashboard.
 CUSTOMERS = ["alice", "bob", "carol", "dave", "erin"]
-PIZZAS = ["margherita", "pepperoni", "hawaiian", "veggie", "quattro-formaggi"]
+PIZZAS = ["margherita", "pepperoni", "hawaiian", "veggie", "quattro-formaggi", "speziale", "mushroom"]
 
 
 def main():
