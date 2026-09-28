@@ -180,7 +180,8 @@ def list_orders():
     Redis cache (a "read model" updated by events) instead of querying the
     heavy write-side MongoDB replica set on every dashboard poll.
     """
-    all_orders = list(orders.find({}, {"created_at": 0}))
+    # Sorted newest-first so the dashboard's "last 20" list is meaningful.
+    all_orders = list(orders.find({}).sort("created_at", -1))
 
     counts = {"PENDING": 0, "BAKING": 0, "PAID": 0, "FAILED": 0}
     for o in all_orders:
