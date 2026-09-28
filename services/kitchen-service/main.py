@@ -31,7 +31,7 @@ def health():
 def bake(req: BakeRequest):
     """Bake a pizza. Simulates real oven time by sleeping for 2 seconds.
 
-    TODO (Lab 2): Convert this REST endpoint into a RabbitMQ message listener.
+    TODO: Convert this REST endpoint into a RabbitMQ message listener.
     Instead of the OrderService calling us and blocking, we should subscribe
     to OrderPlacedEvent, bake on our own schedule, and then publish a
     PizzaBakedEvent when we're done.

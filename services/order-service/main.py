@@ -3,11 +3,10 @@
 # ============================================================================
 #  Tech:  FastAPI + PyMongo (synchronous, on purpose -- it reads top-to-bottom)
 #
-#  This is the "brain" students interact with. In the starter code it does
-#  everything the slow, coupled, synchronous way. Over the three lab sessions
+#  Everything is slow, coupled, synchronous way. Over the three lab sessions
 #  you will gradually pull it apart into a proper event-driven system.
 #
-#  Look for the `TODO (Lab N)` comments -- those mark exactly where each
+#  Look for the `TODO` comments -- those mark exactly where each
 #  session's exercise happens.
 # ============================================================================
 
@@ -42,7 +41,7 @@ PAYMENT_URL = os.getenv("PAYMENT_URL", "http://payment-service:8002")
 def parse_write_concern(raw):
     """Turn the .env value into a value PyMongo understands.
 
-    Accepts friendly variants so students don't get tripped up by syntax:
+    Accepts friendly variants:
         "1"          -> 1          (wait for the primary only)   [AP-leaning]
         "majority"   -> "majority" (wait for a majority of nodes) [CP-leaning]
         "w:1" / "w=1"/ "w:majority" are also tolerated.
@@ -77,9 +76,8 @@ orders = db.get_collection(
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Pizzeria OrderService")
 
-# Wide-open CORS so students can just double-click dashboard.html (file://)
-# and have it work. They should be learning about distributed systems, not
-# fighting CORS preflight errors.
+# Wide-open CORS so we can just double-click dashboard.html (file://)
+# and have it work. NEVER user this in a production system.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -119,7 +117,7 @@ def create_order(req: OrderRequest):
         3. Call the PaymentService and wait for it to (maybe) succeed.
         4. Update the final state.
 
-    This is intentionally the "bad" design -- the whole point of Session 2 is
+    This is intentionally the "bad" design -- the whole point of the Lab is
     to feel the pain of synchronous coupling before replacing it with events.
     """
     order = {
@@ -136,17 +134,15 @@ def create_order(req: OrderRequest):
     orders.insert_one(order)
 
     # ------------------------------------------------------------------
-    # TODO (Lab 2): Remove this synchronous call and publish an
+    # TODO (Lab): Remove this synchronous call and publish an
     # OrderPlacedEvent to RabbitMQ instead. The KitchenService and
     # PaymentService should react to that event on their own time, so
     # that a slow kitchen never blocks the customer's order.
     # ------------------------------------------------------------------
     try:
-        # --- Synchronous call #1: bake the pizza (blocks for ~2 seconds) ---
+        # --- Synchronous call #1: bake the pizza (blocks for ~10 seconds) ---
         # Mark it BAKING *before* the call so the order actually spends the
-        # ~2s bake time in the BAKING state (and shows up on the dashboard).
-        # If we set BAKING only after /bake returns, it would be overwritten
-        # by PAID/FAILED milliseconds later and never be visible.
+        # ~10s bake time in the BAKING state (and shows up on the dashboard).
         orders.update_one({"_id": order["_id"]}, {"$set": {"state": "BAKING"}})
         order["state"] = "BAKING"
         requests.post(f"{KITCHEN_URL}/bake", json=order, timeout=10)
