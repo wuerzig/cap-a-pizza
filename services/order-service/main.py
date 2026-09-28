@@ -143,10 +143,13 @@ def create_order(req: OrderRequest):
     # ------------------------------------------------------------------
     try:
         # --- Synchronous call #1: bake the pizza (blocks for ~2 seconds) ---
-        bake_resp = requests.post(f"{KITCHEN_URL}/bake", json=order, timeout=10)
-        if bake_resp.status_code == 200:
-            orders.update_one({"_id": order["_id"]}, {"$set": {"state": "BAKING"}})
-            order["state"] = "BAKING"
+        # Mark it BAKING *before* the call so the order actually spends the
+        # ~2s bake time in the BAKING state (and shows up on the dashboard).
+        # If we set BAKING only after /bake returns, it would be overwritten
+        # by PAID/FAILED milliseconds later and never be visible.
+        orders.update_one({"_id": order["_id"]}, {"$set": {"state": "BAKING"}})
+        order["state"] = "BAKING"
+        requests.post(f"{KITCHEN_URL}/bake", json=order, timeout=10)
 
         # --- Synchronous call #2: take payment (fails ~30% of the time) ---
         pay_resp = requests.post(f"{PAYMENT_URL}/pay", json=order, timeout=10)

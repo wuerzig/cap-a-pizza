@@ -39,6 +39,7 @@ distributed-pizzeria/
 ├── README.md                     # You are here
 ├── load_tester.py                # Fires 5 POST /orders per second, forever
 ├── dashboard.html                # Vanilla HTML/JS live dashboard
+├── clear-db.sh                   # Wipes all orders from MongoDB (reset between runs)
 ├── requirements-loadtest.txt     # Deps for running load_tester.py on the host
 │
 ├── mongo-init/

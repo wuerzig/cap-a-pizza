@@ -13,9 +13,8 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Pizzeria KitchenService")
 
-# How long a pizza takes to bake. Two seconds is long enough to be annoying
-# under load -- which is exactly what motivates the move to events in Lab 2.
-BAKE_SECONDS = 2
+# How long a pizza takes to bake.
+BAKE_SECONDS = 10
 
 
 class BakeRequest(BaseModel):
