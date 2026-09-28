@@ -26,9 +26,9 @@ from pymongo.write_concern import WriteConcern
 # Configuration -- ALL of it comes from environment variables.
 # ---------------------------------------------------------------------------
 # This is deliberate and is the heart of the Session 1 CAP experiment:
-# students flip MONGO_WRITE_CONCERN between "1" and "majority" in the .env
-# file and observe how the system behaves under a network partition.
-# NOTHING about consistency is hard-coded here.
+# students flip MONGO_WRITE_CONCERN between "1" (wait for the primary only)
+# and "3" (wait for ALL three nodes), pause ONE secondary, and observe how the
+# system behaves. NOTHING about consistency is hard-coded here.
 # ---------------------------------------------------------------------------
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo-primary:27017/?replicaSet=rs0")
 MONGO_DB = os.getenv("MONGO_DB", "pizzeria")
@@ -44,8 +44,9 @@ def parse_write_concern(raw):
 
     Accepts friendly variants:
         "1"          -> 1          (wait for the primary only)   [AP-leaning]
-        "majority"   -> "majority" (wait for a majority of nodes) [CP-leaning]
-        "w:1" / "w=1"/ "w:majority" are also tolerated.
+        "3"          -> 3          (wait for ALL three nodes)     [CP-leaning]
+        "majority"   -> "majority" (wait for a majority of nodes)
+        "w:1" / "w=1"/ "w:3" are also tolerated.
     """
     value = raw.strip()
     # Strip an optional "w:" or "w=" prefix if a student copied it verbatim.
@@ -62,14 +63,19 @@ WRITE_CONCERN_VALUE = parse_write_concern(RAW_WRITE_CONCERN)
 # Database handle
 # ---------------------------------------------------------------------------
 # We attach the WriteConcern to the *collection* so that every insert/update
-# on it respects the concern the student chose. `serverSelectionTimeoutMS`
-# is kept modest so that when the primary loses its majority (CP mode), the
-# load tester visibly *freezes then errors* instead of hanging forever.
+# on it respects the concern the student chose.
+#   - serverSelectionTimeoutMS: if there's no reachable primary (e.g. two nodes
+#     paused), fail after 5s instead of hanging forever.
+#   - WTIMEOUT_MS: in CP mode (w=3) with one node paused, the write can never be
+#     fully acknowledged. Rather than block a server thread indefinitely, give
+#     up after WTIMEOUT_MS so the request returns a clean 503 and the load
+#     tester shows a tidy "UNAVAILABLE (CP)" line. (Ignored when w=1.)
+WTIMEOUT_MS = 3000
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client[MONGO_DB]
 orders = db.get_collection(
     "orders",
-    write_concern=WriteConcern(w=WRITE_CONCERN_VALUE),
+    write_concern=WriteConcern(w=WRITE_CONCERN_VALUE, wtimeout=WTIMEOUT_MS),
 )
 
 # ---------------------------------------------------------------------------
@@ -130,14 +136,14 @@ def create_order(req: OrderRequest):
     }
 
     # Step 1: persist the order. This insert is what the CAP experiment
-    # observes. Under w:majority with a lost majority (two secondaries paused):
-    #   - for the first few seconds the write BLOCKS waiting for acks, then
-    #   - the isolated primary steps down (electionTimeoutMillis, ~10s) and the
-    #     driver can no longer find a primary ("No replica set members match
-    #     selector 'Primary()'").
-    # BOTH outcomes mean the same thing: the system chose Consistency over
-    # Availability. We catch it and return a clean 503 so the load tester shows
-    # a tidy "unavailable" line instead of an unhandled 500 stack trace.
+    # observes. With ONE secondary paused, the primary stays up, so the write
+    # concern alone decides the outcome:
+    #   - w=1: the primary acknowledges by itself -> order ACCEPTED (available).
+    #   - w=3: the write waits for the paused node too, which never answers, so
+    #          after WTIMEOUT_MS pymongo raises a write-concern timeout -> we
+    #          return a clean 503 (consistency chosen over availability).
+    # (If you instead pause TWO nodes, the primary loses its majority, steps
+    #  down, and this raises "No primary" for BOTH settings -- MongoDB is CP.)
     try:
         orders.insert_one(order)
     except PyMongoError as exc:
@@ -145,8 +151,8 @@ def create_order(req: OrderRequest):
             status_code=503,
             detail=(
                 "Order rejected -- database unavailable. This is the CAP "
-                "theorem in action: with w=majority and a lost majority, the "
-                f"primary cannot accept writes. ({type(exc).__name__})"
+                "theorem in action: the write concern could not be satisfied "
+                f"while a replica is unreachable. ({type(exc).__name__})"
             ),
         )
 

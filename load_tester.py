@@ -12,11 +12,13 @@
 #
 #  Requires:  pip install requests
 #
-#  WHAT TO WATCH DURING THE CAP EXPERIMENT
-#  ---------------------------------------
-#    - w:1  + paused secondaries -> requests keep succeeding (Availability).
-#    - w:majority + paused secondaries -> requests FREEZE then time out
+#  WHAT TO WATCH DURING THE CAP EXPERIMENT  (pause exactly ONE secondary)
+#  ---------------------------------------------------------------------
+#    - w=1 + one paused secondary -> requests keep succeeding (Availability).
+#    - w=3 + one paused secondary -> requests FREEZE then time out / DROP
 #      (Consistency preserved, Availability sacrificed).
+#  (Pausing TWO nodes makes the primary step down and BOTH settings fail --
+#   that just shows MongoDB is inherently CP.)
 # ============================================================================
 
 import os
