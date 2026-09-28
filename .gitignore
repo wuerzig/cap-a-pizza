@@ -1,0 +1,13 @@
+# Students copy .env.example -> .env locally; don't commit their local dial.
+services/*/.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Editor noise
+.vscode/
+.idea/
+.DS_Store

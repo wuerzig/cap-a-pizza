@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+   dashboard.html  --  the Pizzeria manager's live wall display
+  ============================================================================
+   Plain vanilla HTML + JS (no build step, no framework, no npm). Just open
+   this file in a browser -- double-click it, or serve the folder -- while the
+   stack is running.
+
+   It polls GET /orders once per second and shows the totals. During the CAP
+   experiment, watch this board:
+     - AP mode: the numbers keep climbing even while nodes are paused.
+     - CP mode: the numbers FREEZE (the write side has stopped accepting).
+
+   NOTE: this reads from the heavy write database on every poll. That is the
+   problem Session 2 (CQRS) fixes -- a fast read model / Redis cache instead.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>🍕 Pizzeria Live Dashboard</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #1b1b1f;
+      color: #f4f4f5;
+      margin: 0;
+      padding: 2rem;
+      text-align: center;
+    }
+    h1 { font-weight: 600; }
+    .cards {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 2rem;
+    }
+    .card {
+      background: #27272a;
+      border-radius: 16px;
+      padding: 2rem 2.5rem;
+      min-width: 160px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    .card .value { font-size: 3rem; font-weight: 700; }
+    .card .label { font-size: 0.9rem; opacity: 0.7; margin-top: 0.5rem; letter-spacing: 0.05em; }
+    .total   .value { color: #f4f4f5; }
+    .pending .value { color: #fbbf24; }
+    .baking  .value { color: #fb923c; }
+    .paid    .value { color: #4ade80; }
+    .failed  .value { color: #f87171; }
+    #status {
+      margin-top: 2rem;
+      font-size: 0.9rem;
+      opacity: 0.6;
+    }
+    #status.error { color: #f87171; opacity: 1; }
+  </style>
+</head>
+<body>
+  <h1>🍕 The Distributed Pizzeria</h1>
+
+  <div class="cards">
+    <div class="card total">   <div class="value" id="total">0</div>  <div class="label">TOTAL ORDERS</div></div>
+    <div class="card pending"> <div class="value" id="pending">0</div><div class="label">PENDING</div></div>
+    <div class="card baking">  <div class="value" id="baking">0</div> <div class="label">BAKING</div></div>
+    <div class="card paid">    <div class="value" id="paid">0</div>   <div class="label">PAID</div></div>
+    <div class="card failed">  <div class="value" id="failed">0</div> <div class="label">FAILED</div></div>
+  </div>
+
+  <div id="status">Connecting…</div>
+
+  <script>
+    // Where the OrderService lives. Change this if you mapped a different port.
+    const ORDER_URL = "http://localhost:8000";
+
+    async function refresh() {
+      const status = document.getElementById("status");
+      try {
+        const res = await fetch(`${ORDER_URL}/orders`);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        const c = data.counts || {};
+
+        document.getElementById("total").textContent   = data.total ?? 0;
+        document.getElementById("pending").textContent = c.PENDING ?? 0;
+        document.getElementById("baking").textContent  = c.BAKING ?? 0;
+        document.getElementById("paid").textContent    = c.PAID ?? 0;
+        document.getElementById("failed").textContent  = c.FAILED ?? 0;
+
+        status.textContent = "Last updated: " + new Date().toLocaleTimeString();
+        status.className = "";
+      } catch (err) {
+        // In CP mode under partition, GET may also stall/fail -- that's the
+        // "unavailable" signal. Show it in red instead of silently freezing.
+        status.textContent = "⚠ Cannot reach OrderService (" + err.message + ")";
+        status.className = "error";
+      }
+    }
+
+    // Poll once per second, forever.
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>

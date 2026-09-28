@@ -1,0 +1,7 @@
+# Dependencies for running load_tester.py on your HOST machine
+# (the dashboard needs no dependencies -- it's plain HTML/JS).
+#
+#   python -m venv venv && source venv/bin/activate
+#   pip install -r requirements-loadtest.txt
+#   python load_tester.py
+requests==2.32.3

@@ -1,0 +1,163 @@
+# ============================================================================
+#  The Distributed Pizzeria - Lab Infrastructure
+# ============================================================================
+#  This single file boots the entire lab environment:
+#    - A 3-node MongoDB replica set  (for the CAP / replication experiment)
+#    - A RabbitMQ broker w/ management UI (used starting in Session 2)
+#    - The three microservices (Order, Kitchen, Payment)
+#
+#  Start everything with:   docker compose up --build
+#  Tear it all down with:   docker compose down -v
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # MongoDB Replica Set (3 nodes)
+  # --------------------------------------------------------------------------
+  # All three nodes run the SAME command: join replica set "rs0".
+  # They are plain, auth-less nodes on purpose -- this is a teaching lab,
+  # not production. Keeping it simple means students can focus on CAP,
+  # not on keyfiles and X.509 certificates.
+  #
+  # During Session 1 students will `docker pause mongo-sec-1` etc. to
+  # simulate a network partition and watch the CAP theorem play out.
+  # --------------------------------------------------------------------------
+  mongo-primary:
+    image: mongo:7
+    container_name: mongo-primary
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    ports:
+      - "27017:27017"   # exposed so you can connect with Compass/mongosh if curious
+    networks:
+      - pizzeria-net
+    healthcheck:
+      # A node is "healthy" once mongod answers a ping.
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mongo-sec-1:
+    image: mongo:7
+    container_name: mongo-sec-1
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    networks:
+      - pizzeria-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mongo-sec-2:
+    image: mongo:7
+    container_name: mongo-sec-2
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    networks:
+      - pizzeria-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # --------------------------------------------------------------------------
+  # MongoDB Initializer (runs once, then exits)
+  # --------------------------------------------------------------------------
+  # This tiny helper container waits until all three mongod nodes answer,
+  # then runs `rs.initiate(...)` exactly once so the replica set forms
+  # automatically. After that it exits with code 0 and gets out of the way.
+  # --------------------------------------------------------------------------
+  mongo-init:
+    image: mongo:7
+    container_name: mongo-init
+    depends_on:
+      mongo-primary:
+        condition: service_healthy
+      mongo-sec-1:
+        condition: service_healthy
+      mongo-sec-2:
+        condition: service_healthy
+    volumes:
+      - ./mongo-init:/scripts:ro
+    entrypoint: ["bash", "/scripts/run-init.sh"]
+    networks:
+      - pizzeria-net
+    restart: "no"
+
+  # --------------------------------------------------------------------------
+  # RabbitMQ (message broker)
+  # --------------------------------------------------------------------------
+  # Not used by the starter code (Session 1 is all synchronous REST), but it
+  # is pre-wired and ready so that in Session 2 students only have to write
+  # publish/subscribe logic -- never broker configuration.
+  #   - AMQP port:        5672
+  #   - Management UI:     http://localhost:15672  (guest / guest)
+  # --------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"     # AMQP protocol
+      - "15672:15672"   # Management web UI
+    networks:
+      - pizzeria-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # --------------------------------------------------------------------------
+  # OrderService (the core service)
+  # --------------------------------------------------------------------------
+  # Waits for the replica set initializer to finish before starting, so its
+  # first write does not race the `rs.initiate()`.
+  # --------------------------------------------------------------------------
+  order-service:
+    build: ./services/order-service
+    container_name: order-service
+    env_file:
+      - ./services/order-service/.env
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    # Mounted so `uvicorn --reload` picks up code edits during Session 2/3
+    # without rebuilding the image.
+    volumes:
+      - ./services/order-service:/app
+    networks:
+      - pizzeria-net
+
+  # --------------------------------------------------------------------------
+  # KitchenService  (bakes pizzas -- slowly, on purpose)
+  # --------------------------------------------------------------------------
+  kitchen-service:
+    build: ./services/kitchen-service
+    container_name: kitchen-service
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/kitchen-service:/app
+    networks:
+      - pizzeria-net
+
+  # --------------------------------------------------------------------------
+  # PaymentService  (fails 30% of the time -- on purpose)
+  # --------------------------------------------------------------------------
+  payment-service:
+    build: ./services/payment-service
+    container_name: payment-service
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./services/payment-service:/app
+    networks:
+      - pizzeria-net
+
+networks:
+  pizzeria-net:
+    driver: bridge
