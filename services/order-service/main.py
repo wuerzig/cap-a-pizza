@@ -129,7 +129,7 @@ def create_order(req: OrderRequest):
 
     Starter flow (fully synchronous and tightly coupled):
         1. Write the order to Mongo as PENDING.
-        2. Call the KitchenService and wait 2s for the pizza to bake.
+        2. Call the KitchenService and wait 10s for the pizza to bake.
         3. Call the PaymentService and wait for it to (maybe) succeed.
         4. Update the final state.
 
@@ -172,8 +172,8 @@ def create_order(req: OrderRequest):
         raise HTTPException(
             status_code=503,
             detail=(
-                "Order rejected -- no reachable primary. With a majority of "
-                "nodes down MongoDB refuses all writes (it is a CP system). "
+                "Order rejected -- no reachable primary."
+                " "
                 f"({type(exc).__name__})"
             ),
         )
