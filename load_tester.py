@@ -47,7 +47,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 ORDER_URL = os.getenv("ORDER_URL", "http://localhost:8000")
-REQUESTS_PER_SECOND = 5
+REQUESTS_PER_SECOND = 0.5
 DELAY = 1.0 / REQUESTS_PER_SECOND  # 0.2s between submissions
 
 # Generous timeout: a *successful* order legitimately takes >10s in the
