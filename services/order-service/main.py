@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pymongo import MongoClient
-from pymongo.errors import PyMongoError
+from pymongo.errors import PyMongoError, WriteConcernError
 from pymongo.write_concern import WriteConcern
 
 # ---------------------------------------------------------------------------
@@ -66,17 +66,26 @@ WRITE_CONCERN_VALUE = parse_write_concern(RAW_WRITE_CONCERN)
 # on it respects the concern the student chose.
 #   - serverSelectionTimeoutMS: if there's no reachable primary (e.g. two nodes
 #     paused), fail after 5s instead of hanging forever.
-#   - WTIMEOUT_MS: in CP mode (w=3) with one node paused, the write can never be
-#     fully acknowledged. Rather than block a server thread indefinitely, give
-#     up after WTIMEOUT_MS so the request returns a clean 503 and the load
-#     tester shows a tidy "UNAVAILABLE (CP)" line. (Ignored when w=1.)
-WTIMEOUT_MS = 3000
+#   - WTIMEOUT_MS: in CP mode (w=3) with one node paused, the requested
+#     acknowledgment can never arrive. Rather than block a server thread
+#     forever, give up waiting after WTIMEOUT_MS. The DATA is still committed to
+#     the primary -- we just learn that the durability we asked for wasn't met,
+#     and flag the order accordingly (see create_order). (Ignored when w=1.)
+WTIMEOUT_MS = 1500
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client[MONGO_DB]
 orders = db.get_collection(
     "orders",
     write_concern=WriteConcern(w=WRITE_CONCERN_VALUE, wtimeout=WTIMEOUT_MS),
 )
+
+# A second handle on the SAME collection, but always w=1. We use it for the
+# internal state transitions (PENDING -> BAKING -> PAID/FAILED), which are just
+# bookkeeping. Only the customer-facing "accept the order" insert uses the
+# student-configured write concern -- that is the one CAP decision we want to
+# study. Using w=1 here keeps status flips fast and stops every single update
+# from also stalling for WTIMEOUT_MS when a replica is paused.
+orders_local = orders.with_options(write_concern=WriteConcern(w=1))
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -133,26 +142,39 @@ def create_order(req: OrderRequest):
         "pizza": req.pizza,
         "state": "PENDING",
         "created_at": datetime.datetime.utcnow().isoformat(),
+        # The durability we ASKED for (the student's MONGO_WRITE_CONCERN)...
+        "write_concern": str(WRITE_CONCERN_VALUE),
+        # ...and whether we actually GOT it. Updated below if the write concern
+        # times out. Surfaced on the dashboard so the CAP trade-off is visible.
+        "replicated": True,
     }
 
-    # Step 1: persist the order. This insert is what the CAP experiment
-    # observes. With ONE secondary paused, the primary stays up, so the write
-    # concern alone decides the outcome:
-    #   - w=1: the primary acknowledges by itself -> order ACCEPTED (available).
-    #   - w=3: the write waits for the paused node too, which never answers, so
-    #          after WTIMEOUT_MS pymongo raises a write-concern timeout -> we
-    #          return a clean 503 (consistency chosen over availability).
-    # (If you instead pause TWO nodes, the primary loses its majority, steps
-    #  down, and this raises "No primary" for BOTH settings -- MongoDB is CP.)
+    # Step 1: accept + persist the order using the student-configured write
+    # concern. THIS is the CAP decision point. With ONE secondary paused the
+    # primary stays up, so the write concern alone decides what happens:
+    #   - w=1: the primary acknowledges by itself -> fully replicated, all good.
+    #   - w=3: the write waits for the paused node too. The data still commits
+    #          on the primary, but the requested ack never arrives, so after
+    #          WTIMEOUT_MS pymongo raises WriteConcernError. We do NOT abort --
+    #          the order is usable -- we just mark it replicated=False so the
+    #          consistency cost is visible. (Availability kept; durability
+    #          guarantee degraded = the trade-off, made concrete.)
     try:
         orders.insert_one(order)
+    except WriteConcernError:
+        # Committed locally, but not acknowledged to the requested level.
+        order["replicated"] = False
+        orders_local.update_one({"_id": order["_id"]}, {"$set": {"replicated": False}})
     except PyMongoError as exc:
+        # No reachable primary at all (e.g. TWO nodes paused -> the primary lost
+        # its majority and stepped down). Nothing was written; the system is
+        # genuinely unavailable. This is MongoDB being fundamentally CP.
         raise HTTPException(
             status_code=503,
             detail=(
-                "Order rejected -- database unavailable. This is the CAP "
-                "theorem in action: the write concern could not be satisfied "
-                f"while a replica is unreachable. ({type(exc).__name__})"
+                "Order rejected -- no reachable primary. With a majority of "
+                "nodes down MongoDB refuses all writes (it is a CP system). "
+                f"({type(exc).__name__})"
             ),
         )
 
@@ -166,21 +188,23 @@ def create_order(req: OrderRequest):
         # --- Synchronous call #1: bake the pizza (blocks for ~10 seconds) ---
         # Mark it BAKING *before* the call so the order actually spends the
         # ~10s bake time in the BAKING state (and shows up on the dashboard).
-        orders.update_one({"_id": order["_id"]}, {"$set": {"state": "BAKING"}})
+        # (These status flips use orders_local = w=1: they're bookkeeping, not
+        # the CAP decision, so they stay fast even while a replica is paused.)
+        orders_local.update_one({"_id": order["_id"]}, {"$set": {"state": "BAKING"}})
         order["state"] = "BAKING"
         requests.post(f"{KITCHEN_URL}/bake", json=order, timeout=10)
 
         # --- Synchronous call #2: take payment (fails ~30% of the time) ---
         pay_resp = requests.post(f"{PAYMENT_URL}/pay", json=order, timeout=10)
         if pay_resp.status_code == 200:
-            orders.update_one({"_id": order["_id"]}, {"$set": {"state": "PAID"}})
+            orders_local.update_one({"_id": order["_id"]}, {"$set": {"state": "PAID"}})
             order["state"] = "PAID"
         else:
             # Payment was declined. In a synchronous world we just mark it.
             # TODO (Lab 3): There is no local ROLLBACK across services once
             # this is event-driven -- this failure is what the Saga (a
             # compensating transaction) will have to clean up.
-            orders.update_one({"_id": order["_id"]}, {"$set": {"state": "FAILED"}})
+            orders_local.update_one({"_id": order["_id"]}, {"$set": {"state": "FAILED"}})
             order["state"] = "FAILED"
 
     except requests.RequestException as exc:
@@ -213,11 +237,19 @@ def list_orders():
         )
 
     counts = {"PENDING": 0, "BAKING": 0, "PAID": 0, "FAILED": 0}
+    unreplicated = 0
     for o in all_orders:
         counts[o.get("state", "PENDING")] = counts.get(o.get("state", "PENDING"), 0) + 1
+        # replicated defaults to True for orders written before this field existed.
+        if not o.get("replicated", True):
+            unreplicated += 1
 
     return {
         "total": len(all_orders),
         "counts": counts,
+        # How many accepted orders did NOT meet the requested write concern
+        # (i.e. were not fully replicated). 0 in w=1 mode; climbs in w=3 mode
+        # while a replica is paused -- the visible cost of the CAP trade-off.
+        "unreplicated": unreplicated,
         "orders": all_orders,
     }

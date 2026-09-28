@@ -14,11 +14,11 @@
 #
 #  WHAT TO WATCH DURING THE CAP EXPERIMENT  (pause exactly ONE secondary)
 #  ---------------------------------------------------------------------
-#    - w=1 + one paused secondary -> requests keep succeeding (Availability).
-#    - w=3 + one paused secondary -> requests FREEZE then time out / DROP
-#      (Consistency preserved, Availability sacrificed).
-#  (Pausing TWO nodes makes the primary step down and BOTH settings fail --
-#   that just shows MongoDB is inherently CP.)
+#    - w=1 + one paused secondary -> orders succeed, fully replicated.
+#    - w=3 + one paused secondary -> orders STILL succeed (available!) but are
+#      tagged "[NOT REPLICATED]" -- the write concern couldn't be met.
+#    - pause TWO nodes (any setting) -> "UNAVAILABLE (CP) -> 503": the primary
+#      steps down and MongoDB refuses all writes.
 # ============================================================================
 
 import os
@@ -61,12 +61,18 @@ def main():
             )
             if resp.status_code == 200:
                 ok += 1
-                state = resp.json().get("state", "?")
+                body = resp.json()
+                state = body.get("state", "?")
+                # In w=3 mode with a replica paused the order is still accepted,
+                # but the write concern wasn't met -> flag it so the cost of the
+                # consistency setting is visible right here in the console.
+                note = "" if body.get("replicated", True) else \
+                    f"  [NOT REPLICATED, w={body.get('write_concern', '?')}]"
                 print(f"[{stamp}] #{sent:<5} OK      -> {state:<8} "
-                      f"(ok={ok} failed={failed})")
+                      f"(ok={ok} failed={failed}){note}")
             elif resp.status_code == 503:
-                # CP mode: OrderService cleanly reports the DB is unavailable
-                # (no reachable primary). This is the CAP theorem's cost.
+                # No reachable primary (e.g. TWO nodes paused): MongoDB refuses
+                # all writes. This is the hard CP wall -- total unavailability.
                 failed += 1
                 print(f"[{stamp}] #{sent:<5} UNAVAILABLE (CP) -> 503 "
                       f"(ok={ok} failed={failed})")
