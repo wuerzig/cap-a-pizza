@@ -15,10 +15,11 @@ import uuid
 import datetime
 
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 from pymongo.write_concern import WriteConcern
 
 # ---------------------------------------------------------------------------
@@ -129,9 +130,25 @@ def create_order(req: OrderRequest):
     }
 
     # Step 1: persist the order. This insert is what the CAP experiment
-    # observes -- under w:majority with a lost majority, THIS line blocks
-    # and then raises a timeout.
-    orders.insert_one(order)
+    # observes. Under w:majority with a lost majority (two secondaries paused):
+    #   - for the first few seconds the write BLOCKS waiting for acks, then
+    #   - the isolated primary steps down (electionTimeoutMillis, ~10s) and the
+    #     driver can no longer find a primary ("No replica set members match
+    #     selector 'Primary()'").
+    # BOTH outcomes mean the same thing: the system chose Consistency over
+    # Availability. We catch it and return a clean 503 so the load tester shows
+    # a tidy "unavailable" line instead of an unhandled 500 stack trace.
+    try:
+        orders.insert_one(order)
+    except PyMongoError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Order rejected -- database unavailable. This is the CAP "
+                "theorem in action: with w=majority and a lost majority, the "
+                f"primary cannot accept writes. ({type(exc).__name__})"
+            ),
+        )
 
     # ------------------------------------------------------------------
     # TODO (Lab): Remove this synchronous call and publish an
@@ -177,7 +194,17 @@ def list_orders():
     heavy write-side MongoDB replica set on every dashboard poll.
     """
     # Sorted newest-first so the dashboard's "last 20" list is meaningful.
-    all_orders = list(orders.find({}).sort("created_at", -1))
+    # Reads default to the primary, so in CP mode after a stepdown this also
+    # fails -- return a clean 503 so the dashboard shows its red "unavailable"
+    # banner instead of a 500. (The secondaries are paused too, so there is
+    # genuinely nothing left to read from: total unavailability = the CP tax.)
+    try:
+        all_orders = list(orders.find({}).sort("created_at", -1))
+    except PyMongoError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Dashboard unavailable -- database has no reachable primary. ({type(exc).__name__})",
+        )
 
     counts = {"PENDING": 0, "BAKING": 0, "PAID": 0, "FAILED": 0}
     for o in all_orders:

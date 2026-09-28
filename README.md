@@ -21,7 +21,7 @@ See LICENSE.md for licensing details.
     ┌───────────────────┐        ┌────────────────────┐
     │  KitchenService   │        │  PaymentService    │
     │  (FastAPI, :8001) │        │  (FastAPI, :8002)  │
-    │  /bake sleeps 2s  │        │  /pay fails ~30%   │
+    │  /bake sleeps 10s │        │  /pay fails ~30%   │
     └───────────────────┘        └────────────────────┘
 
     Persistence:  3-node MongoDB replica set  (mongo-primary + 2 secondaries)

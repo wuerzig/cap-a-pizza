@@ -62,6 +62,12 @@ def main():
                 state = resp.json().get("state", "?")
                 print(f"[{stamp}] #{sent:<5} OK      -> {state:<8} "
                       f"(ok={ok} failed={failed})")
+            elif resp.status_code == 503:
+                # CP mode: OrderService cleanly reports the DB is unavailable
+                # (no reachable primary). This is the CAP theorem's cost.
+                failed += 1
+                print(f"[{stamp}] #{sent:<5} UNAVAILABLE (CP) -> 503 "
+                      f"(ok={ok} failed={failed})")
             else:
                 failed += 1
                 print(f"[{stamp}] #{sent:<5} HTTP {resp.status_code} "
