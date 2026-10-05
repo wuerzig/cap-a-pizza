@@ -20,47 +20,43 @@ services:
   # not production. Keeping it simple means students can focus on CAP,
   # not on keyfiles and X.509 certificates.
   #
+  # NOTE: we use the `fenio/mongodb-no-avx` image because the lab VMs have CPUs
+  # without AVX, which the official mongo:5+ images require. That image is a
+  # from-source Debian build and behaves differently from the official one:
+  #   - its ENTRYPOINT is already /usr/local/bin/mongod, so `command` lists
+  #     ONLY the flags (passing "mongod" here would be a stray positional arg);
+  #   - it ships mongod + mongos but NOT mongosh, so there is no in-image client
+  #     for a healthcheck. Readiness is instead handled by the `mongo-init`
+  #     container (official mongo:7, which has mongosh) -- see run-init.sh.
+  #
   # During Session 1 students will `docker pause mongo-sec-1` etc. to
   # simulate a network partition and watch the CAP theorem play out.
   # --------------------------------------------------------------------------
   mongo-primary:
-    image: mongo:7
+    image: ghcr.io/fenio/mongodb-no-avx:7
     container_name: mongo-primary
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    entrypoint: ["/usr/local/bin/mongod"]
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
     ports:
       - "27017:27017"   # exposed so you can connect with Compass/mongosh if curious
     networks:
       - pizzeria-net
-    healthcheck:
-      # A node is "healthy" once mongod answers a ping.
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
 
   mongo-sec-1:
-    image: mongo:7
+    image: ghcr.io/fenio/mongodb-no-avx:7
     container_name: mongo-sec-1
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    entrypoint: ["/usr/local/bin/mongod"]
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
     networks:
       - pizzeria-net
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
 
   mongo-sec-2:
-    image: mongo:7
+    image: ghcr.io/fenio/mongodb-no-avx:7
     container_name: mongo-sec-2
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    entrypoint: ["/usr/local/bin/mongod"]
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
     networks:
       - pizzeria-net
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
 
   # --------------------------------------------------------------------------
   # MongoDB Initializer (runs once, then exits)
@@ -68,17 +64,23 @@ services:
   # This tiny helper container waits until all three mongod nodes answer,
   # then runs `rs.initiate(...)` exactly once so the replica set forms
   # automatically. After that it exits with code 0 and gets out of the way.
+  #
+  # It uses the official mongo:7 image purely as a MONGOSH CLIENT (the no-AVX
+  # node image has no mongosh). We never start mongod here, so the AVX
+  # requirement of official mongod is irrelevant -- mongosh itself (Node-based)
+  # runs fine without AVX. The nodes have no healthcheck, so we depend on
+  # service_started and let run-init.sh poll all three for actual readiness.
   # --------------------------------------------------------------------------
   mongo-init:
     image: mongo:7
     container_name: mongo-init
     depends_on:
       mongo-primary:
-        condition: service_healthy
+        condition: service_started
       mongo-sec-1:
-        condition: service_healthy
+        condition: service_started
       mongo-sec-2:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - ./mongo-init:/scripts:ro
     entrypoint: ["bash", "/scripts/run-init.sh"]
