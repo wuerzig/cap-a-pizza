@@ -13,7 +13,7 @@ See LICENSE.md for licensing details.
                     ┌─────────────────────┐
    load_tester.py   │    OrderService     │   dashboard.html
    ───────────────► │   (FastAPI, :8000)  │ ◄───────────────
-   5 orders/sec     │                     │   polls /orders 1x/sec
+   steady orders    │                     │   polls /orders 1x/sec
                     └───────┬─────────────┘
                             │ (synchronous REST calls — for now)
               ┌─────────────┴──────────────┐
@@ -30,53 +30,39 @@ See LICENSE.md for licensing details.
 
 ---
 
-## Project structure
+## Quickstart
 
-```
-distributed-pizzeria/
-├── docker-compose.yml            # Boots the whole environment
-├── .gitignore
-├── README.md                     # You are here
-├── load_tester.py                # Fires 5 POST /orders per second, forever
-├── dashboard.html                # Vanilla HTML/JS live dashboard
-├── clear-db.sh                   # Wipes all orders from MongoDB (reset between runs)
-├── requirements-loadtest.txt     # Deps for running load_tester.py on the host
-│
-├── mongo-init/
-│   ├── init-replica.js           # rs.initiate() — the 3-node replica set config
-│   └── run-init.sh               # Waits for mongod, then applies it (idempotent)
-│
-└── services/
-    ├── order-service/            # THE CORE
-    │   ├── main.py               #   FastAPI app (POST/GET /orders)
-    │   ├── requirements.txt
-    │   ├── Dockerfile
-    │   ├── .env.example          #   Template — copy to .env
-    │   └── .env                  #   ACTIVE config (the CAP lever lives here)
-    │
-    ├── kitchen-service/          # Bakes pizzas (sleeps 2s)
-    │   ├── main.py
-    │   ├── requirements.txt
-    │   └── Dockerfile
-    │
-    └── payment-service/          # Takes payment (fails ~30%)
-        ├── main.py
-        ├── requirements.txt
-        └── Dockerfile
+Prerequisites: Docker + Docker Compose, and Python 3 (only for the load tester).
+
+```bash
+# 1. Boot everything (MongoDB replica set, RabbitMQ, the three services)
+docker compose up --build
+
+# 2. In a second terminal, generate traffic
+pip install -r requirements-loadtest.txt
+python load_tester.py
+
+# 3. Open the live dashboard
+#    open dashboard.html in your browser
+
+# Reset between runs:  ./clear-db.sh
+# Tear everything down: docker compose down -v
 ```
 
----
+## Key files to look at
 
-## Service reference
+| File | What it's for |
+|---|---|
+| `services/order-service/main.py` | The core: `POST`/`GET /orders`, the write-concern logic you'll study |
+| `services/kitchen-service/main.py` | Bakes pizzas (deliberately slow) |
+| `services/payment-service/main.py` | Takes payment (fails ~30% on purpose) |
+| `services/order-service/.env` | **The CAP lever** — `MONGO_WRITE_CONCERN` (`1` = availability-leaning, `3`/all = consistency-leaning) |
+| `docker-compose.yml` | MongoDB replica-set nodes & images, ports, broker |
+| `mongo-init/init-replica.js` | The 3-node replica-set definition (`rs.initiate`) |
+| `load_tester.py` / `dashboard.html` | Traffic generator and live view |
 
-| Service | Port | Key endpoints | Notes |
-|---|---|---|---|
-| OrderService   | 8000 | `POST /orders`, `GET /orders` | Reads Mongo URI + WriteConcern from `.env` |
-| KitchenService | 8001 | `POST /bake` | Sleeps ~2s to simulate baking |
-| PaymentService | 8002 | `POST /pay`  | Declines ~30% of payments |
-| RabbitMQ       | 5672 / 15672 | — | Management UI at http://localhost:15672 (guest/guest) |
-| MongoDB        | 27017 | — | 3-node replica set `rs0` |
+## Lab instructions
 
-The `MONGO_WRITE_CONCERN` value in `services/order-service/.env` is the dial for
-the CAP experiment (`1` = availability-leaning, `majority` = consistency-leaning).
+Step-by-step exercises for all three sessions are in **`LAB_CAP-a-Pizza.pdf`**.
+
 *Buon appetito, and happy partitioning.*
